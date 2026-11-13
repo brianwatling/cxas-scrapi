@@ -768,3 +768,102 @@ def test_parser_lint_and_branch_and_promote_env_file() -> None:
     )
     assert promote_args.deployments_command == "promote"
     assert promote_args.env_file == "./env.prod.json"
+
+
+def test_parser_service_directory_map_flags() -> None:
+    """Test --service-directory-map across pull, push, branch, ci-test, local-test, lint, and promote."""
+    parser = get_parser()
+
+    pull_args = parser.parse_args(
+        [
+            "pull",
+            "projects/p/locations/us/apps/a",
+            "--service-directory-map",
+            "./sd-dev.yaml",
+        ]
+    )
+    assert pull_args.service_directory_map == "./sd-dev.yaml"
+
+    push_args = parser.parse_args(
+        [
+            "push",
+            "--app-dir",
+            "./my-agent",
+            "--service-directory-map",
+            "./sd-prod.yaml",
+        ]
+    )
+    assert push_args.service_directory_map == "./sd-prod.yaml"
+
+    branch_args = parser.parse_args(
+        [
+            "branch",
+            "Source App",
+            "--new-name",
+            "UAT App",
+            "--service-directory-map",
+            "./sd-uat.yaml",
+            "--project-id",
+            "p",
+            "--location",
+            "us",
+        ]
+    )
+    assert branch_args.service_directory_map == "./sd-uat.yaml"
+
+    ci_args = parser.parse_args(
+        [
+            "ci-test",
+            "--app-dir",
+            "./my-agent",
+            "--service-directory-map",
+            "./sd-ci.txt",
+            "--project-id",
+            "p",
+            "--location",
+            "us",
+        ]
+    )
+    assert ci_args.service_directory_map == "./sd-ci.txt"
+
+    local_args = parser.parse_args(
+        [
+            "local-test",
+            "--app-dir",
+            "./my-agent",
+            "--service-directory-map",
+            "./sd-local.yaml",
+            "--project-id",
+            "p",
+            "--location",
+            "us",
+        ]
+    )
+    assert local_args.service_directory_map == "./sd-local.yaml"
+
+    lint_args = parser.parse_args(
+        [
+            "lint",
+            "--app-dir",
+            "./my-agent",
+            "--service-directory-map",
+            "./sd-prod.yaml",
+        ]
+    )
+    assert lint_args.service_directory_map == "./sd-prod.yaml"
+
+    promote_args = parser.parse_args(
+        [
+            "deployments",
+            "promote",
+            "--app-resource-name",
+            "projects/p/locations/us/apps/a",
+            "--app-dir",
+            "./my-agent",
+            "--service-directory-map",
+            "./sd-prod.yaml",
+            "--live-deployment-resource-name",
+            "projects/p/locations/us/apps/a/deployments/d",
+        ]
+    )
+    assert promote_args.service_directory_map == "./sd-prod.yaml"

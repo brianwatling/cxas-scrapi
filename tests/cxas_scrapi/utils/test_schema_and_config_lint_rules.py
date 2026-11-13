@@ -23,8 +23,12 @@ import pytest
 from cxas_scrapi.utils.lint_rules.config import (
     AgentMissingInstruction,
     AppRootAgentValidation,
+    AppServiceDirectoryValidation,
     AppVariableDefaultsAndEnvVars,
     RootAgentMissingEndSession,
+)
+from cxas_scrapi.utils.lint_rules.tools import (
+    PythonToolServiceDirectoryEgress,
 )
 from cxas_scrapi.utils.linter import LintContext, build_registry
 
@@ -447,3 +451,160 @@ def test_a017_flags_undeclared_or_non_placeholder_override_in_env_file(
     assert any(
         "Variable 'unknown_flag'" in m and "not declared" in m for m in messages
     )
+
+
+def test_a018_validates_service_directory_format_region_l4_and_python_trap(
+    tmp_path: Path,
+) -> None:
+    a018 = AppServiceDirectoryValidation()
+    app_dir = tmp_path / "app"
+    app_dir.mkdir()
+    app_json = app_dir / "app.json"
+    app_json.write_text(json.dumps({"displayName": "MyApp"}))
+
+    ts1 = app_dir / "toolsets" / "orders_api"
+    ts1.mkdir(parents=True)
+    (ts1 / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "orders_api",
+                "openApiToolset": {
+                    "url": "https://orders.partner.com/v1",
+                    "serviceDirectoryConfig": {"service": "$env_var"},
+                },
+            }
+        )
+    )
+
+    # Without environment.json or --service-directory-map, "$env_var" passes
+    ctx_bare = LintContext(
+        project_root=tmp_path, app_dir=app_dir, evals_dir=tmp_path
+    )
+    assert a018.check(app_json, app_json.read_text(), ctx_bare) == []
+
+    # Multi-region SD ("us"), shared SD across 2 FQDNs, & pythonFunction SD
+    shared_sd = (
+        "projects/p/locations/us-central1/namespaces/ces-egress/services/svc-1"
+    )
+    (ts1 / "orders_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "orders_api",
+                "openApiToolset": {
+                    "url": "https://orders.partner.com/v1",
+                    "serviceDirectoryConfig": {"service": shared_sd},
+                },
+            }
+        )
+    )
+    ts2 = app_dir / "toolsets" / "payments_api"
+    ts2.mkdir(parents=True)
+    (ts2 / "payments_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "payments_api",
+                "openApiToolset": {
+                    "url": "https://payments.partner.com/v1",
+                    "serviceDirectoryConfig": {"service": shared_sd},
+                },
+            }
+        )
+    )
+    ts_multiregion = app_dir / "toolsets" / "bad_region_api"
+    ts_multiregion.mkdir(parents=True)
+    (ts_multiregion / "bad_region_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "bad_region_api",
+                "mcpToolset": {
+                    "serverAddress": "https://mcp.partner.com/sse",
+                    "serviceDirectoryConfig": {
+                        "service": (
+                            "projects/p/locations/us"
+                            "/namespaces/ces-egress/services/svc-2"
+                        )
+                    },
+                },
+            }
+        )
+    )
+    py_tool = app_dir / "tools" / "py_helper"
+    py_tool.mkdir(parents=True)
+    (py_tool / "py_helper.json").write_text(
+        json.dumps(
+            {
+                "displayName": "py_helper",
+                "pythonFunction": {
+                    "name": "py_helper",
+                    "serviceDirectoryConfig": {"service": shared_sd},
+                },
+            }
+        )
+    )
+
+    errs = a018.check(app_json, app_json.read_text(), ctx_bare)
+    msgs = [r.message for r in errs]
+    assert any("L4 invariant violation" in m for m in msgs)
+    assert any("concrete GCP region" in m for m in msgs)
+    assert any("pythonFunction" in m and "does not support" in m for m in msgs)
+
+
+def test_t017_warns_on_ces_requests_only_when_app_uses_service_directory(
+    tmp_path: Path,
+) -> None:
+    t017 = PythonToolServiceDirectoryEgress()
+    app_dir = tmp_path / "app"
+    code_path = (
+        app_dir
+        / "tools"
+        / "fetch_account"
+        / "python_function"
+        / "python_code.py"
+    )
+    code_path.parent.mkdir(parents=True)
+    py_src = (
+        "def fetch_account(account_id: str) -> dict:\n"
+        '    """Fetch account."""\n'
+        '    resp = ces_requests.get("https://api.partner.com/accounts")\n'
+        '    return {"ok": True}\n'
+    )
+    code_path.write_text(py_src)
+
+    ctx = LintContext(
+        project_root=tmp_path,
+        app_dir=app_dir,
+        evals_dir=tmp_path,
+        app_root=app_dir,
+    )
+    # No Service Directory configured -> no T017 warning
+    assert t017.check(code_path, py_src, ctx) == []
+
+    # Add a Service Directory-configured toolset -> T017 fires!
+    ts_dir = app_dir / "toolsets" / "partner_api"
+    ts_dir.mkdir(parents=True)
+    (ts_dir / "partner_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "partner_api",
+                "openApiToolset": {
+                    "url": "https://api.partner.com/v1",
+                    "serviceDirectoryConfig": {"service": "$env_var"},
+                },
+            }
+        )
+    )
+    results = t017.check(code_path, py_src, ctx)
+    assert len(results) == 1
+    assert results[0].rule_id == "T017"
+    assert results[0].line == 3
+    assert "ces_requests" in results[0].message
+
+    # Comments mentioning ces_requests do not trigger T017
+    safe_src = (
+        "def fetch_account(account_id: str) -> dict:\n"
+        '    """Fetch account via OpenApiToolset instead of ces_requests."""\n'
+        "    # Migrated away from ces_requests.get\n"
+        "    return tools.partner_api_get_account(account_id=account_id)\n"
+    )
+    code_path.write_text(safe_src)
+    assert t017.check(code_path, safe_src, ctx) == []

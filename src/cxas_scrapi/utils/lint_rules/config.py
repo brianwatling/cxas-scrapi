@@ -36,6 +36,12 @@ from cxas_scrapi.utils.linter import (
     Severity,
     rule,
 )
+from cxas_scrapi.utils.service_directory import (
+    ServiceDirectoryMap,
+    inspect_app_service_directories,
+    load_service_directory_map,
+    validate_sd_resource_name,
+)
 
 
 @rule("config")
@@ -1154,5 +1160,230 @@ class AppVariableDefaultsAndEnvVars(Rule):
                         ),
                     )
                 )
+
+        return results
+
+
+@rule("config")
+class AppServiceDirectoryValidation(Rule):
+    id = "A018"
+    name = "service-directory-config"
+    description = (
+        "Validates tool/toolset Service Directory resource format, concrete "
+        "region, $env_var/map resolution, and 1-SD-per-FQDN invariant"
+    )
+    default_severity = Severity.ERROR
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.name not in ("app.json", "app.yaml"):
+            return []
+
+        app_root = file_path.parent
+        results: list[LintResult] = []
+
+        env_path: Path | None = None
+        if context.env_file is not None:
+            if context.env_file.is_file():
+                env_path = context.env_file
+        else:
+            candidate_env = app_root / "environment.json"
+            if candidate_env.is_file():
+                env_path = candidate_env
+
+        sd_map: ServiceDirectoryMap | None = None
+        if context.service_directory_map is not None:
+            map_path = context.service_directory_map
+            map_rel = _rel_or_str(map_path, context.project_root)
+            if not map_path.is_file():
+                results.append(
+                    self.make_result(
+                        file=map_rel,
+                        message=(
+                            f"Service Directory mapping file '{map_path}' "
+                            "not found"
+                        ),
+                        fix=(
+                            "Provide an existing JSON, YAML, or text mapping "
+                            "file to --service-directory-map"
+                        ),
+                    )
+                )
+                return results
+            sd_map = load_service_directory_map(map_path)
+            for err in sd_map.errors:
+                results.append(
+                    self.make_result(
+                        file=map_rel,
+                        message=err,
+                        fix=(
+                            "Fix the Service Directory mapping entry to use "
+                            "'projects/{project}/locations/{region}/namespaces/"
+                            "{namespace}/services/{service}' with 1 SD service "
+                            "per FQDN"
+                        ),
+                    )
+                )
+
+        inspections = inspect_app_service_directories(
+            app_root, env_file=env_path
+        )
+        sd_to_fqdn: dict[str, tuple[str, str]] = {}
+
+        for item in inspections:
+            item_rel = _rel_or_str(item.config_path, context.project_root)
+            res_label = f"{item.kind}/{item.resource_id}"
+
+            if item.unsupported_sd_component is not None:
+                results.append(
+                    self.make_result(
+                        file=item_rel,
+                        message=(
+                            f"Tool '{item.resource_id}' configures "
+                            "serviceDirectoryConfig on "
+                            f"'{item.unsupported_sd_component}', which does "
+                            "not support Service Directory Private Network "
+                            "Access"
+                        ),
+                        fix=(
+                            "Remove serviceDirectoryConfig from pythonFunction "
+                            "and invoke a Service Directory-configured "
+                            "OpenApiToolset via tools.<name>(...) instead"
+                        ),
+                    )
+                )
+                if item.component_key is None:
+                    continue
+
+            assert item.component_key is not None
+            desired = (
+                sd_map.lookup(
+                    item.kind,
+                    item.resource_id,
+                    item.display_name,
+                    item.fqdn,
+                )
+                if sd_map is not None
+                else None
+            )
+
+            effective: str | None = desired
+            if effective is None and item.has_sd_block:
+                if item.raw_service == ENV_VAR_PLACEHOLDER:
+                    if (
+                        isinstance(item.env_service, str)
+                        and item.env_service
+                        and item.env_service != ENV_VAR_PLACEHOLDER
+                    ):
+                        effective = item.env_service
+                    elif env_path is not None or sd_map is not None:
+                        results.append(
+                            self.make_result(
+                                file=item_rel,
+                                message=(
+                                    f"{res_label} declares "
+                                    "serviceDirectoryConfig.service="
+                                    f"'{ENV_VAR_PLACEHOLDER}', but no matching "
+                                    "binding was found in "
+                                    "--service-directory-map or "
+                                    "environment.json"
+                                ),
+                                fix=(
+                                    "Add a matching host or resource entry in "
+                                    "--service-directory-map or set "
+                                    "serviceDirectoryConfig.service in "
+                                    "environment.json"
+                                ),
+                            )
+                        )
+                        continue
+                    else:
+                        continue
+                else:
+                    raw_err = validate_sd_resource_name(item.raw_service)
+                    if raw_err:
+                        results.append(
+                            self.make_result(
+                                file=item_rel,
+                                message=(
+                                    f"{res_label} "
+                                    f"serviceDirectoryConfig.service {raw_err}"
+                                ),
+                                fix=(
+                                    "Set serviceDirectoryConfig.service to a "
+                                    "concrete regional Service Directory "
+                                    "resource or '$env_var'"
+                                ),
+                            )
+                        )
+                        continue
+                    effective = str(item.raw_service).strip()
+            elif (
+                effective is None
+                and isinstance(item.env_service, str)
+                and item.env_service
+                and item.env_service != ENV_VAR_PLACEHOLDER
+            ):
+                env_err = validate_sd_resource_name(item.env_service)
+                if env_err and env_path is not None:
+                    env_rel = _rel_or_str(env_path, context.project_root)
+                    results.append(
+                        self.make_result(
+                            file=env_rel,
+                            message=(
+                                f"{res_label} in {env_path.name} "
+                                f"serviceDirectoryConfig.service {env_err}"
+                            ),
+                            fix=(
+                                "Update serviceDirectoryConfig.service in "
+                                f"{env_path.name} to use a concrete GCP region"
+                            ),
+                        )
+                    )
+                continue
+
+            if effective is None:
+                continue
+
+            eff_err = validate_sd_resource_name(effective)
+            if eff_err:
+                results.append(
+                    self.make_result(
+                        file=item_rel,
+                        message=(
+                            f"{res_label} "
+                            f"serviceDirectoryConfig.service {eff_err}"
+                        ),
+                        fix=(
+                            "Use 'projects/{project}/locations/{region}/"
+                            "namespaces/{namespace}/services/{service}' with a "
+                            "concrete GCP region"
+                        ),
+                    )
+                )
+                continue
+
+            if item.fqdn:
+                prev = sd_to_fqdn.get(effective)
+                if prev is not None and prev[0] != item.fqdn:
+                    results.append(
+                        self.make_result(
+                            file=item_rel,
+                            message=(
+                                "L4 invariant violation: Service Directory "
+                                f"'{effective}' is shared across distinct "
+                                f"FQDNs ('{prev[0]}' on {prev[1]} and "
+                                f"'{item.fqdn}' on {res_label}); 1 Service "
+                                "Directory service = 1 VIP = 1 FQDN"
+                            ),
+                            fix=(
+                                "Provision and bind a dedicated Service "
+                                "Directory service per target FQDN"
+                            ),
+                        )
+                    )
+                else:
+                    sd_to_fqdn[effective] = (item.fqdn, res_label)
 
         return results

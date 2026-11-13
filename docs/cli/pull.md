@@ -5,7 +5,7 @@ Use `cxas pull` to download a CX Agent Studio app to your local machine — it's
 ## Usage
 
 ```
-cxas pull <app> [--target-dir DIR] [--app-dir-name NAME] [--version-id VERSION] [--project-id PROJECT] [--location LOCATION] [--overwrite]
+cxas pull <app> [--target-dir DIR] [--app-dir-name NAME] [--version-id VERSION] [--service-directory-map FILE] [--project-id PROJECT] [--location LOCATION] [--overwrite]
 ```
 
 ## Arguments
@@ -21,6 +21,7 @@ cxas pull <app> [--target-dir DIR] [--app-dir-name NAME] [--version-id VERSION] 
 | `--target-dir DIR` | No | `.` (current directory) | The local directory to extract the app into. The directory is created if it does not exist. |
 | `--app-dir-name NAME` | No | Exported app folder name | Override the top-level folder name created inside `--target-dir`. Useful when pulling multiple dev or staging apps into a single shared local directory. |
 | `--version-id VERSION` | No | — | Optional. Export a specific app version instead of the live app. Can be a version display name (e.g., `'v1.0'`), a bare version ID (e.g., `'001'`), or a full resource name (`projects/.../locations/.../apps/.../versions/001`). |
+| `--service-directory-map FILE` | No | — | Record discovered OpenAPI/MCP `serviceDirectoryConfig.service` bindings into a JSON, YAML, or text mapping file and replace concrete values in pulled tool/toolset configs with `"$env_var"`. |
 | `--project-id PROJECT` | No* | — | GCP project ID. Required when `app` is a display name rather than a full resource name. |
 | `--location LOCATION` | No* | — | GCP location (e.g., `global`, `us-central1`). Required when `app` is a display name. |
 | `--overwrite` | No | `False` | Remove local resource files missing from the export after extraction. |
@@ -49,7 +50,7 @@ my-agent/<AppName>/
 
 This structure is what `cxas push` expects when you upload changes back. Point `--app-dir` at the exported app directory containing `app.json`.
 
-If the destination directory already contains an `app.json` or `app.yaml` where `variableDeclarations` entries use `"default": "$env_var"`, `cxas pull` preserves the `"$env_var"` placeholders in `app.json` / `app.yaml` and writes the exported default values into `environment.json` under `app.variableDeclarations`.
+If the destination directory already contains an `app.json` / `app.yaml` where `variableDeclarations` entries use `"default": "$env_var"`, or tool/toolset configs where `serviceDirectoryConfig.service` uses `"$env_var"`, `cxas pull` preserves those `"$env_var"` placeholders locally and syncs the exported concrete values into `environment.json`. When `--service-directory-map FILE` is passed, `cxas pull` also extracts all discovered `serviceDirectoryConfig` bindings into `FILE` (keyed by target FQDN under `hosts`, with `toolsets`/`tools` fallbacks when no static FQDN is available) and sets `serviceDirectoryConfig.service` to `"$env_var"` in local configs.
 
 ## Examples
 

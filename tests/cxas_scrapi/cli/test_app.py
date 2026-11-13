@@ -1404,3 +1404,249 @@ def test_app_lint_with_env_file_flag(
     assert excinfo.value.code == 1
     results = json.loads(capsys.readouterr().out)
     assert any(r["rule_id"] == "A017" for r in results)
+
+
+def test_app_pull_with_service_directory_map_records_and_placeholderizes(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    sd_dev = (
+        "projects/dev-proj/locations/us-central1"
+        "/namespaces/ces-egress/services/ces-svc-crm-dev"
+    )
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr("My_App/app.json", json.dumps({"displayName": "My App"}))
+        zf.writestr(
+            "My_App/toolsets/crm_api/crm_api.json",
+            json.dumps(
+                {
+                    "displayName": "crm_api",
+                    "openApiToolset": {
+                        "url": "https://crm-dev.partner.com/v1",
+                        "serviceDirectoryConfig": {"service": sd_dev},
+                    },
+                }
+            ),
+        )
+
+    mock_app = mock.MagicMock()
+    mock_app.name = "projects/dev-proj/locations/us/apps/123"
+    mock_apps_client.get_app_by_display_name.return_value = mock_app
+    mock_lro = mock.MagicMock()
+    mock_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = mock_lro
+
+    map_file = tmp_path / "sd-dev.json"
+    args = argparse.Namespace(
+        app="My App",
+        target_dir=str(tmp_path / "out"),
+        project_id="dev-proj",
+        location="us",
+        overwrite=True,
+        service_directory_map=str(map_file),
+    )
+    cli_app.app_pull(args)
+
+    pulled_ts = json.loads(
+        (
+            tmp_path
+            / "out"
+            / "My_App"
+            / "toolsets"
+            / "crm_api"
+            / "crm_api.json"
+        ).read_text()
+    )
+    assert (
+        pulled_ts["openApiToolset"]["serviceDirectoryConfig"]["service"]
+        == "$env_var"
+    )
+    saved_map = json.loads(map_file.read_text())
+    assert saved_map["hosts"] == {"crm-dev.partner.com": sd_dev}
+
+
+def test_app_push_with_service_directory_map_injects_in_staging_only(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    app_dir = tmp_path / "local_app"
+    ts_dir = app_dir / "toolsets" / "crm_api"
+    ts_dir.mkdir(parents=True)
+    (app_dir / "app.json").write_text(json.dumps({"displayName": "Local App"}))
+    local_ts_path = ts_dir / "crm_api.json"
+    local_ts_path.write_text(
+        json.dumps(
+            {
+                "displayName": "crm_api",
+                "openApiToolset": {
+                    "url": "https://crm-prod.partner.com/v1",
+                    "openApiSchema": "openapi: 3.0.0\npaths: {}\n",
+                },
+            }
+        )
+    )
+
+    sd_prod = (
+        "projects/prod-proj/locations/us-central1"
+        "/namespaces/ces-egress/services/ces-svc-crm-prod"
+    )
+    map_file = tmp_path / "sd-prod.json"
+    map_file.write_text(
+        json.dumps({"hosts": {"crm-prod.partner.com": sd_prod}})
+    )
+
+    mock_lro = mock.MagicMock()
+    mock_res = mock.MagicMock()
+    mock_res.name = "projects/prod-proj/locations/us/apps/999"
+    mock_res.warnings = []
+    mock_lro.result.return_value = mock_res
+    mock_apps_client.import_as_new_app.return_value = mock_lro
+
+    args = argparse.Namespace(
+        app_dir=str(app_dir),
+        to=None,
+        app_name=None,
+        display_name="Prod App",
+        env_file=None,
+        service_directory_map=str(map_file),
+        project_id="prod-proj",
+        location="us",
+    )
+    cli_app.app_push(args)
+
+    call_kwargs = mock_apps_client.import_as_new_app.call_args.kwargs
+    with zipfile.ZipFile(io.BytesIO(call_kwargs["app_content"])) as zf:
+        staged_ts = json.loads(
+            zf.read("agent/toolsets/crm_api/crm_api.json").decode("utf-8")
+        )
+    assert (
+        staged_ts["openApiToolset"]["serviceDirectoryConfig"]["service"]
+        == sd_prod
+    )
+    # Working tree remains untouched
+    local_after = json.loads(local_ts_path.read_text())
+    assert "serviceDirectoryConfig" not in local_after["openApiToolset"]
+
+
+def test_app_branch_with_service_directory_map(
+    mock_apps_client: typing.Any,
+    mock_common_get_project_id: typing.Any,
+    mock_common_get_location: typing.Any,
+    tmp_path: typing.Any,
+) -> None:
+    import json  # noqa: PLC0415
+
+    sd_dev = (
+        "projects/dev-proj/locations/us-central1"
+        "/namespaces/ces-egress/services/ces-svc-crm-dev"
+    )
+    sd_uat = (
+        "projects/uat-proj/locations/us-central1"
+        "/namespaces/ces-egress/services/ces-svc-crm-uat"
+    )
+    export_buf = io.BytesIO()
+    with zipfile.ZipFile(export_buf, "w") as zf:
+        zf.writestr("Src/app.json", json.dumps({"displayName": "Src"}))
+        zf.writestr(
+            "Src/toolsets/crm_api/crm_api.json",
+            json.dumps(
+                {
+                    "displayName": "crm_api",
+                    "openApiToolset": {
+                        "url": "https://crm.partner.com/v1",
+                        "serviceDirectoryConfig": {"service": sd_dev},
+                    },
+                }
+            ),
+        )
+
+    mock_src = mock.MagicMock()
+    mock_src.name = "projects/dev-proj/locations/us/apps/111"
+    mock_src.display_name = "Src"
+    mock_apps_client.get_app_by_display_name.return_value = mock_src
+    export_lro = mock.MagicMock()
+    export_lro.result.return_value = mock.MagicMock(
+        app_content=export_buf.getvalue()
+    )
+    mock_apps_client.export_app.return_value = export_lro
+
+    import_lro = mock.MagicMock()
+    import_res = mock.MagicMock()
+    import_res.name = "projects/uat-proj/locations/us/apps/222"
+    import_res.warnings = []
+    import_lro.result.return_value = import_res
+    mock_apps_client.import_as_new_app.return_value = import_lro
+
+    uat_map = tmp_path / "sd-uat.json"
+    uat_map_text = json.dumps({"hosts": {"crm.partner.com": sd_uat}})
+    uat_map.write_text(uat_map_text)
+
+    args = argparse.Namespace(
+        source="Src",
+        new_name="UAT Branch",
+        project_id="uat-proj",
+        location="us",
+        env_file=None,
+        service_directory_map=str(uat_map),
+    )
+    cli_app.app_branch(args)
+
+    # Mapping file was NOT overwritten with dev bindings
+    assert uat_map.read_text() == uat_map_text
+
+    call_kwargs = mock_apps_client.import_as_new_app.call_args.kwargs
+    with zipfile.ZipFile(io.BytesIO(call_kwargs["app_content"])) as zf:
+        branched_ts = json.loads(
+            zf.read("agent/toolsets/crm_api/crm_api.json").decode("utf-8")
+        )
+    assert (
+        branched_ts["openApiToolset"]["serviceDirectoryConfig"]["service"]
+        == sd_uat
+    )
+
+
+def test_app_lint_with_service_directory_map_flag(
+    capsys: typing.Any, tmp_path: typing.Any
+) -> None:
+    import json  # noqa: PLC0415
+
+    _make_lint_app(tmp_path)
+    ts_dir = tmp_path / "toolsets" / "crm_api"
+    ts_dir.mkdir(parents=True)
+    (ts_dir / "crm_api.json").write_text(
+        json.dumps(
+            {
+                "displayName": "crm_api",
+                "openApiToolset": {
+                    "url": "https://crm.partner.com/v1",
+                    "serviceDirectoryConfig": {"service": "$env_var"},
+                },
+            }
+        )
+    )
+    empty_map = tmp_path / "empty_sd.json"
+    empty_map.write_text(json.dumps({"hosts": {}}))
+
+    args = _lint_args(
+        tmp_path,
+        service_directory_map=str(empty_map),
+        json_output=True,
+        only="config",
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        cli_app.app_lint(args)
+
+    assert excinfo.value.code == 1
+    results = json.loads(capsys.readouterr().out)
+    assert any(r["rule_id"] == "A018" for r in results)

@@ -10,6 +10,7 @@ cxas ci-test [--app-dir DIR]
              --location LOCATION
              [--display-name NAME]
              [--env-file FILE]
+             [--service-directory-map FILE]
 ```
 
 ## Options
@@ -21,6 +22,7 @@ cxas ci-test [--app-dir DIR]
 | `--location LOCATION` | Yes | — | GCP location (e.g., `global`, `us-central1`). |
 | `--display-name NAME` | No | `[CI] PR Test <uuid>` | Deterministic display name for the temporary app. If an app with this name already exists it is reused and updated rather than creating a duplicate. Use a name tied to your PR number (e.g., `[CI] PR-123`) to keep things tidy. |
 | `--env-file FILE` | No | — | Path to a JSON environment file to inject as `environment.json`. Useful for passing secrets that shouldn't live in source control. |
+| `--service-directory-map FILE` | No | — | Path to a JSON, YAML, or text Service Directory mapping file to apply in staging before pushing the temporary app. |
 
 ## What the Lifecycle Does
 

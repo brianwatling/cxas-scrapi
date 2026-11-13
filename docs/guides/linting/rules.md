@@ -269,6 +269,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | T012 | `tool-json-missing-description` | Error | Tool JSON configuration must include description |
     | T015 | `tool-entry-first-def` | Error | Entry tool function must be the first top-level `def` in `python_code.py` |
     | T016 | `tool-return-dict-annotation` | Warning | Python tool entry function should declare a `-> dict` return annotation |
+    | T017 | `python-tool-service-directory-egress` | Warning | Python tool calls `ces_requests` directly when the app uses Service Directory Private Network Access |
 
     ---
 
@@ -393,6 +394,7 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     | A015 | `variable-count-limit` | Warning | App `variableDeclarations` exceeds 95 top-level variables (platform cap ~100) |
     | A016 | `llm-policy-guardrail-limit` | Warning | More than 10 enabled `llmPolicy` guardrails attached to an app |
     | A017 | `variable-defaults-and-env-vars` | Error | Validates `variableDeclarations` default types and cross-checks `"$env_var"` placeholders against `environment.json` |
+    | A018 | `service-directory-config` | Error | Validates tool/toolset Service Directory resource format, concrete GCP region, `"$env_var"` / `--service-directory-map` resolution, and the 1-SD-per-FQDN invariant |
 
     ---
 
@@ -425,6 +427,16 @@ Severities shown are the defaults. You can override any rule's severity in `cxas
     *Triggers:* A static `schema.default` does not match its declared `schema.type` (e.g. `"true"` on a `BOOLEAN`), `variableDeclarations` is placed at the top level of `environment.json` instead of under `app.variableDeclarations`, a `"$env_var"` variable is missing or has a mismatched type in `environment.json`, or `environment.json` overrides a variable that is undeclared or lacks `"default": "$env_var"` in `app.json`.
 
     *Fix:* Ensure `schema.default` values match the declared schema type, set `"default": "$env_var"` in `app.json` for environment-specific variables, and nest per-environment values under `app.variableDeclarations` in `environment.json`.
+
+    ---
+
+    **A018 — service-directory-config**
+
+    Validates `serviceDirectoryConfig` across OpenAPI (`openApiToolset`, `openApiTool`) and MCP (`mcpToolset`, `mcpTool`) resources, cross-checking `"$env_var"` placeholders against `environment.json` / `--env-file` and `--service-directory-map`.
+
+    *Triggers:* A `serviceDirectoryConfig.service` resource string is malformed or uses a multi-region/`global` location instead of a concrete GCP region (e.g. `us-central1`), a `"$env_var"` placeholder lacks a concrete binding when `environment.json` or `--service-directory-map` is supplied, two tools/toolsets targeting distinct FQDNs share the same Service Directory service (violating the Layer 4 `1 Service Directory service = 1 VIP = 1 FQDN` invariant), or `serviceDirectoryConfig` is attached to `pythonFunction` (unsupported at runtime).
+
+    *Fix:* Use `projects/{project}/locations/{region}/namespaces/{namespace}/services/{service}` with a concrete GCP region, bind a dedicated Service Directory service per target FQDN, and remove `serviceDirectoryConfig` from `pythonFunction` tools.
 
 === "S — Structure"
 

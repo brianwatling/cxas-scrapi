@@ -1224,6 +1224,10 @@ def local_test(args: argparse.Namespace) -> None:
     if env_file:
         inner_cmd.extend(["--env-file", env_file])
 
+    service_directory_map = getattr(args, "service_directory_map", None)
+    if service_directory_map:
+        inner_cmd.extend(["--service-directory-map", service_directory_map])
+
     docker_cmd.extend(inner_cmd)
 
     print(f"Executing: {' '.join(docker_cmd)}")
@@ -1508,6 +1512,7 @@ def deployments_promote(args: argparse.Namespace) -> None:
         app_name=None,
         display_name=None,
         env_file=getattr(args, "env_file", None),
+        service_directory_map=getattr(args, "service_directory_map", None),
         project_id=None,
         location=None,
         create_version=True,
@@ -2657,6 +2662,14 @@ def get_parser() -> argparse.ArgumentParser:
             "file to include as environment.json."
         ),
     )
+    parser_ci_test.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a Service Directory mapping file (JSON, YAML, "
+            "or text) to apply in staging before pushing the temp app."
+        ),
+    )
     _add_project_location_args(parser_ci_test)
     parser_ci_test.set_defaults(func=ci_test)
 
@@ -2702,6 +2715,14 @@ def get_parser() -> argparse.ArgumentParser:
             "file to include as environment.json."
         ),
     )
+    parser_local_test.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a Service Directory mapping file to forward to "
+            "the containerized ci-test run."
+        ),
+    )
     _add_project_location_args(parser_local_test)
     parser_local_test.set_defaults(func=local_test)
 
@@ -2740,6 +2761,15 @@ def get_parser() -> argparse.ArgumentParser:
             "the exported app will be deleted."
         ),
     )
+    parser_pull.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a JSON, YAML, or text mapping file to record "
+            "discovered Service Directory bindings into and set '$env_var' "
+            "placeholders in pulled tool/toolset configs."
+        ),
+    )
     _add_project_location_args(parser_pull, required=False)
     parser_pull.set_defaults(func=app_pull)
 
@@ -2758,6 +2788,15 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Path to a specific environment JSON "
             "file to include as environment.json."
+        ),
+    )
+    parser_push.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a JSON, YAML, or text Service Directory "
+            "mapping file (by target FQDN and/or tool/toolset name) to apply "
+            "in staging before uploading."
         ),
     )
     parser_push.add_argument(
@@ -2811,6 +2850,14 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Optional: Path to an environment JSON file to validate '$env_var' "
             "variableDeclarations against."
+        ),
+    )
+    parser_lint.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a Service Directory mapping file to validate "
+            "tool and toolset Service Directory bindings against."
         ),
     )
     parser_lint.add_argument(
@@ -2993,6 +3040,14 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Optional: Path to a specific environment JSON file to include "
             "as environment.json when pushing the branched app."
+        ),
+    )
+    parser_branch.add_argument(
+        "--service-directory-map",
+        default=None,
+        help=(
+            "Optional: Path to a Service Directory mapping file to apply when "
+            "pushing the branched app."
         ),
     )
     _add_project_location_args(parser_branch)
@@ -3196,6 +3251,15 @@ def get_parser() -> argparse.ArgumentParser:
         help=(
             "Optional: Path to a specific environment JSON file to include "
             "as environment.json during promotion push."
+        ),
+    )
+    parser_deps_promote.add_argument(
+        "--service-directory-map",
+        required=False,
+        default=None,
+        help=(
+            "Optional: Path to a Service Directory mapping file to apply "
+            "during promotion push."
         ),
     )
     parser_deps_promote.add_argument(

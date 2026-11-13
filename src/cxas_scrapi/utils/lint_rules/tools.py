@@ -33,6 +33,9 @@ from cxas_scrapi.utils.linter import (
     Severity,
     rule,
 )
+from cxas_scrapi.utils.service_directory import (
+    inspect_app_service_directories,
+)
 
 FUNC_DEF_RE = re.compile(r"def\s+(\w+)\s*\(([^)]*)\)")
 
@@ -997,3 +1000,93 @@ class CompositeToolConversationalPacing(Rule):
             ]
 
         return []
+
+
+def _find_ces_requests_line(content: str) -> int | None:
+    """Return 1-based line of first AST reference/import to ces_requests."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(content)
+    except SyntaxError:
+        return None
+
+    matched_lines: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "ces_requests" or alias.name.startswith(
+                    "ces_requests."
+                ):
+                    matched_lines.append(node.lineno)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and (
+                node.module == "ces_requests"
+                or node.module.startswith("ces_requests.")
+            ):
+                matched_lines.append(node.lineno)
+        elif isinstance(node, ast.Name) and node.id == "ces_requests":
+            matched_lines.append(node.lineno)
+
+    return min(matched_lines) if matched_lines else None
+
+
+@rule("tools")
+class PythonToolServiceDirectoryEgress(Rule):
+    id = "T017"
+    name = "python-tool-service-directory-egress"
+    description = (
+        "Python tools using ces_requests bypass Service Directory Private "
+        "Network Access and egress via shared public IPs"
+    )
+    default_severity = Severity.WARNING
+
+    def check(
+        self, file_path: Path, content: str, context: LintContext
+    ) -> list[LintResult]:
+        if file_path.suffix != ".py":
+            return []
+        if "ces_requests" not in content:
+            return []
+
+        line_no = _find_ces_requests_line(content)
+        if line_no is None:
+            return []
+
+        app_root = context.app_root or file_path.parent.parent.parent.parent
+        app_uses_sd = context.service_directory_map is not None
+        if not app_uses_sd and app_root.is_dir():
+            env_path = (
+                context.env_file
+                if context.env_file and context.env_file.is_file()
+                else (app_root / "environment.json")
+            )
+            app_uses_sd = any(
+                item.has_sd_block or bool(item.env_service)
+                for item in inspect_app_service_directories(
+                    app_root, env_file=env_path
+                )
+            )
+        if not app_uses_sd:
+            return []
+
+        tool_name = file_path.parent.parent.name
+        rel = str(file_path.relative_to(context.project_root))
+        return [
+            self.make_result(
+                file=rel,
+                line=line_no,
+                message=(
+                    f"Python tool '{tool_name}' calls 'ces_requests' "
+                    "directly; PythonFunction tools do not support Service "
+                    "Directory Private Network Access and will egress over "
+                    "shared public IPs"
+                ),
+                fix=(
+                    "Route allowlisted external API calls through a Service "
+                    "Directory-configured OpenApiToolset via "
+                    "tools.<toolset>_<operation>(...) or an allowlisted Cloud "
+                    "Run bridge"
+                ),
+            )
+        ]

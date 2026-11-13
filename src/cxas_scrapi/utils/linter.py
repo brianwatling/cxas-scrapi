@@ -318,6 +318,7 @@ class LintContext:
     bypass_tool_prefixes: set = field(default_factory=set)
     app_root: Path | None = None
     env_file: Path | None = None
+    service_directory_map: Path | None = None
     agent_to_parents: dict[str, set[str]] = field(
         default_factory=lambda: defaultdict(set)
     )
@@ -850,6 +851,7 @@ def build_context(
     discovery: Discovery,
     model_override: str | None = None,
     env_file: Path | None = None,
+    service_directory_map: Path | None = None,
 ) -> LintContext:
     """Build the shared lint context from discovered app resources."""
     agents = discovery.discover_agents()
@@ -915,6 +917,7 @@ def build_context(
         bypass_tool_prefixes=bypass_tool_prefixes,
         app_root=app_root,
         env_file=env_file,
+        service_directory_map=service_directory_map,
         agent_to_parents=agent_to_parents,
     )
 

@@ -7,6 +7,7 @@
 ```
 cxas lint [--app-dir DIR]
           [--env-file FILE]
+          [--service-directory-map FILE]
           [--fix]
           [--only CATEGORY]
           [--rule IDS]
@@ -26,7 +27,8 @@ cxas lint [--app-dir DIR]
 | Option | Required | Default | Description |
 |--------|----------|---------|-------------|
 | `--app-dir DIR` | No | `.` (current directory) | Path to the root of the app directory to lint. The linter discovers the app structure automatically. |
-| `--env-file FILE` | No | `<app-dir>/environment.json` (if present) | Path to an environment JSON file used by rule `A017` to validate `"$env_var"` placeholders and `app.variableDeclarations` types. |
+| `--env-file FILE` | No | `<app-dir>/environment.json` (if present) | Path to an environment JSON file used by rules `A017` and `A018` to validate `"$env_var"` placeholders. |
+| `--service-directory-map FILE` | No | — | Path to a JSON, YAML, or text Service Directory mapping file validated by rules `A018` and `T017` against tool/toolset configurations. |
 | `--fix` | No | `false` | Print fix suggestions alongside each issue. Does not automatically modify files. |
 | `--only CATEGORY` | No | — | Limit linting to a single category. See [Rule Categories](#rule-categories) below. |
 | `--rule IDS` | No | — | Run only specific rules. Accepts a comma-separated list of rule IDs (e.g., `I003,C005`). |

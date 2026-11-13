@@ -36,6 +36,12 @@ from cxas_scrapi.utils.env_vars import (
     preserve_env_var_placeholders_on_pull,
     resolve_app_env_variables_in_dir,
 )
+from cxas_scrapi.utils.service_directory import (
+    collect_env_var_service_directory_targets,
+    preserve_service_directory_placeholders_on_pull,
+    record_and_placeholderize_service_directories_on_pull,
+    resolve_service_directories_in_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +146,7 @@ def app_pull(args: argparse.Namespace) -> None:
         getattr(args, "overwrite", False),
         app_version=app_version,
         app_dir_name=getattr(args, "app_dir_name", None),
+        service_directory_map=getattr(args, "service_directory_map", None),
     )
 
 
@@ -150,6 +157,7 @@ def _app_pull(
     overwrite: bool = False,
     app_version: str | None = None,
     app_dir_name: str | None = None,
+    service_directory_map: str | None = None,
 ) -> None:
     """Helper to pull an app from CXAS."""
     try:
@@ -217,6 +225,10 @@ def _app_pull(
                         )
                 except (OSError, ValueError):
                     prev_env_defaults = {}
+
+            prev_sd_targets, prev_sd_defaults = (
+                collect_env_var_service_directory_targets(pulled_app_root)
+            )
 
             if dest_app_root is not None:
                 os.makedirs(dest_app_root, exist_ok=True)
@@ -344,6 +356,30 @@ def _app_pull(
                     "environment.json."
                 )
 
+        if service_directory_map:
+            recorded_sd = record_and_placeholderize_service_directories_on_pull(
+                pulled_app_root,
+                service_directory_map,
+                previous_env_defaults=prev_sd_defaults,
+            )
+            print(
+                f"Recorded {len(recorded_sd)} Service Directory binding(s) in "
+                f"{service_directory_map} and set '$env_var' placeholders in "
+                "local configs."
+            )
+        elif prev_sd_targets:
+            preserved_sd = preserve_service_directory_placeholders_on_pull(
+                pulled_app_root,
+                prev_sd_targets,
+                previous_env_defaults=prev_sd_defaults,
+            )
+            if preserved_sd:
+                print(
+                    "Preserved $env_var Service Directory placeholders for "
+                    f"{len(preserved_sd)} resource(s) and updated "
+                    "environment.json."
+                )
+
         print("Successfully pulled app.")
 
     except Exception as e:
@@ -379,6 +415,7 @@ def app_push(args: argparse.Namespace) -> str | None:
         identifier=getattr(args, "to", None) or getattr(args, "app_name", None),
         display_name=getattr(args, "display_name", None) or display_name,
         env_file=getattr(args, "env_file", None),
+        service_directory_map=getattr(args, "service_directory_map", None),
         args=args,
     )
 
@@ -390,6 +427,7 @@ def _app_push(
     identifier: str | None = None,
     display_name: str | None = None,
     env_file: str | None = None,
+    service_directory_map: str | None = None,
     args: argparse.Namespace | None = None,
 ) -> str | None:
     """Helper to push an app to CXAS."""
@@ -453,6 +491,25 @@ def _app_push(
             print(
                 f"Resolved {len(resolved_vars)} '$env_var' variable "
                 f"default(s) from environment.json: {', '.join(resolved_vars)}"
+            )
+
+        if (
+            env_file_missing
+            and not service_directory_map
+            and collect_env_var_service_directory_targets(inner_dir)[0]
+        ):
+            raise FileNotFoundError(
+                f"Custom environment file '{env_file}' not found; required to "
+                "resolve '$env_var' Service Directory bindings"
+            )
+
+        resolved_sd = resolve_service_directories_in_dir(
+            inner_dir, map_path=service_directory_map
+        )
+        if resolved_sd:
+            print(
+                f"Resolved Service Directory config for {len(resolved_sd)} "
+                f"resource(s): {', '.join(resolved_sd)}"
             )
 
         # ZIP does not support timestamps before 1980.
@@ -603,6 +660,7 @@ def app_branch(args: argparse.Namespace) -> None:
 
     apps_client, app_name, _ = _resolve_app_args(args.source, args)
     env_file = getattr(args, "env_file", None)
+    service_directory_map = getattr(args, "service_directory_map", None)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
@@ -626,6 +684,7 @@ def app_branch(args: argparse.Namespace) -> None:
                 apps_client=apps_client,
                 display_name=args.new_name,
                 env_file=env_file,
+                service_directory_map=service_directory_map,
             )
         except Exception as e:
             print(f"Failed to branch app: {e}")
@@ -783,6 +842,8 @@ def app_lint(args: argparse.Namespace) -> None:
 
     env_file_arg = getattr(args, "env_file", None)
     resolved_env_file = Path(env_file_arg).resolve() if env_file_arg else None
+    sd_map_arg = getattr(args, "service_directory_map", None)
+    resolved_sd_map = Path(sd_map_arg).resolve() if sd_map_arg else None
 
     context = build_context(
         project_root,
@@ -790,6 +851,7 @@ def app_lint(args: argparse.Namespace) -> None:
         discovery,
         model_override=model_override,
         env_file=resolved_env_file,
+        service_directory_map=resolved_sd_map,
     )
 
     if not json_output:

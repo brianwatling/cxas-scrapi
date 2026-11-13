@@ -9,6 +9,7 @@ cxas local-test [--app-dir DIR]
                 --project-id PROJECT
                 --location LOCATION
                 [--env-file FILE]
+                [--service-directory-map FILE]
 ```
 
 ## Options
@@ -19,6 +20,7 @@ cxas local-test [--app-dir DIR]
 | `--project-id PROJECT` | Yes | — | GCP project ID, forwarded to the container as an environment variable. |
 | `--location LOCATION` | Yes | — | GCP location, forwarded to the container (e.g., `global`, `us-central1`). |
 | `--env-file FILE` | No | — | Path to a JSON environment file, forwarded to the container and injected as `environment.json` inside the `ci-test` run. |
+| `--service-directory-map FILE` | No | — | Path to a Service Directory mapping file, forwarded to the containerized `ci-test` run. |
 
 ## How It Works
 
